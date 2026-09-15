@@ -1,0 +1,40 @@
+# Coolify stack: Obsidian (web desktop) + MCPVault over HTTP, sharing one vault volume.
+services:
+  obsidian:
+    image: lscr.io/linuxserver/obsidian:latest
+    environment:
+      - SERVICE_URL_OBSIDIAN_3000
+      - PUID=1000
+      - PGID=1000
+      - TZ=${TZ:-America/Los_Angeles}
+      - CUSTOM_USER=${SERVICE_USER_OBSIDIAN}
+      - PASSWORD=${SERVICE_PASSWORD_OBSIDIAN}
+    volumes:
+      - obsidian-config:/config
+      - vault:/vaults
+    shm_size: 1gb
+    security_opt:
+      - seccomp:unconfined
+    restart: unless-stopped
+
+  mcpvault:
+    build: .
+    environment:
+      - SERVICE_URL_MCPVAULT_3333
+      - VAULT_PATH=/vault/${VAULT_NAME:-Main}
+      - MCP_AUTH_TOKEN=${SERVICE_PASSWORD_64_MCP}
+      - READ_ONLY=${READ_ONLY:-false}
+    volumes:
+      - vault:/vault
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3333/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    depends_on:
+      - obsidian
+    restart: unless-stopped
+
+volumes:
+  obsidian-config:
+  vault:
