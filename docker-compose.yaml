@@ -1,8 +1,9 @@
-# Coolify stack: Obsidian desktop + MCPVault over HTTP on one shared vault volume,
-# with mcp-auth-proxy in front of MCPVault for Claude OAuth.
+# Coolify stack: Obsidian desktop + MCPVault over HTTP on one shared vault volume.
 #
-# Obsidian UI is bound to the Tailscale IP only. MCPVault publishes no ports;
-# assign a Coolify domain to authproxy (port 80) to reach it.
+# Nothing here is public. Obsidian UI is bound to the Tailscale IP only.
+# MCPVault joins the shared `coolify` network as `obsidian-mcpvault` so the
+# austindevs-mcp gateway can reach it at http://obsidian-mcpvault:3333/mcp
+# with a bearer token (MCP_AUTH_TOKEN).
 services:
   obsidian:
     image: lscr.io/linuxserver/obsidian:latest
@@ -28,30 +29,25 @@ services:
     restart: unless-stopped
     environment:
       - VAULT_PATH=/vault/${VAULT_NAME:-Main}
-      - ALLOW_NO_AUTH=true
+      - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN:?MCP_AUTH_TOKEN missing}
       - READ_ONLY=${READ_ONLY:-false}
     volumes:
       - vault:/vault
+    networks:
+      default:
+      coolify:
+        aliases:
+          - obsidian-mcpvault
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3333/healthz"]
       interval: 30s
       timeout: 3s
       retries: 3
 
-  authproxy:
-    image: ghcr.io/sigbit/mcp-auth-proxy:v2.10.2
-    restart: unless-stopped
-    environment:
-      - EXTERNAL_URL=${EXTERNAL_URL:?EXTERNAL_URL missing}
-      - NO_AUTO_TLS=true
-      - PASSWORD=${PROXY_PASSWORD:?PROXY_PASSWORD missing}
-    command: http://mcpvault:3333/mcp
-    volumes:
-      - authproxy-data:/data
-    depends_on:
-      - mcpvault
-
 volumes:
   obsidian-config:
   vault:
-  authproxy-data:
+
+networks:
+  coolify:
+    external: true
