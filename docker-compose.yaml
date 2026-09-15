@@ -1,33 +1,14 @@
-# Coolify stack: Obsidian desktop + MCPVault over HTTP on one shared vault volume.
+# Coolify stack: MCPVault over HTTP plus Obsidian Headless Sync, sharing one vault volume.
 #
-# Nothing here is public. Obsidian UI is bound to the Tailscale IP only.
-# MCPVault joins the shared `coolify` network as `obsidian-mcpvault` so the
-# austindevs-mcp gateway can reach it at http://obsidian-mcpvault:3333/mcp
-# with a bearer token (MCP_AUTH_TOKEN).
+# Nothing here is public. MCPVault joins the shared `coolify` network as
+# `obsidian-mcpvault` so the austindevs-mcp gateway can reach it at
+# http://obsidian-mcpvault:3333/mcp with a bearer token (MCP_AUTH_TOKEN).
+# The sync sidecar pushes vault changes to Obsidian Sync and pulls edits back.
 #
-# Secrets are set as runtime env in Coolify. They are not marked required here
+# MCP_AUTH_TOKEN is set as runtime env in Coolify. It is not marked required here
 # because Coolify interpolates the file at build time without runtime values.
-# mcpvault exits on startup if MCP_AUTH_TOKEN is empty.
+# mcpvault exits on startup if it is empty.
 services:
-  obsidian:
-    image: lscr.io/linuxserver/obsidian:latest
-    restart: unless-stopped
-    shm_size: 1gb
-    security_opt:
-      - seccomp:unconfined
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=${TZ:-America/Los_Angeles}
-      - CUSTOM_USER=${OBSIDIAN_USER:-kevin}
-      - PASSWORD=${OBSIDIAN_PASSWORD}
-    volumes:
-      - obsidian-config:/config
-      - vault:/vaults
-    ports:
-      - "${TAILSCALE_IP:-100.83.15.84}:3010:3000"
-      - "${TAILSCALE_IP:-100.83.15.84}:3011:3001"
-
   mcpvault:
     build: .
     restart: unless-stopped
@@ -48,9 +29,22 @@ services:
       timeout: 3s
       retries: 3
 
+  sync:
+    build:
+      context: .
+      dockerfile: sync.Dockerfile
+    restart: unless-stopped
+    environment:
+      - VAULT_PATH=/vault/${VAULT_NAME:-Main}
+    volumes:
+      - vault:/vault
+      - sync-home:/home/node
+    depends_on:
+      - mcpvault
+
 volumes:
-  obsidian-config:
   vault:
+  sync-home:
 
 networks:
   coolify:
