@@ -4,6 +4,10 @@
 # MCPVault joins the shared `coolify` network as `obsidian-mcpvault` so the
 # austindevs-mcp gateway can reach it at http://obsidian-mcpvault:3333/mcp
 # with a bearer token (MCP_AUTH_TOKEN).
+#
+# Secrets are set as runtime env in Coolify. They are not marked required here
+# because Coolify interpolates the file at build time without runtime values.
+# mcpvault exits on startup if MCP_AUTH_TOKEN is empty.
 services:
   obsidian:
     image: lscr.io/linuxserver/obsidian:latest
@@ -16,7 +20,7 @@ services:
       - PGID=1000
       - TZ=${TZ:-America/Los_Angeles}
       - CUSTOM_USER=${OBSIDIAN_USER:-kevin}
-      - PASSWORD=${OBSIDIAN_PASSWORD:?OBSIDIAN_PASSWORD missing}
+      - PASSWORD=${OBSIDIAN_PASSWORD}
     volumes:
       - obsidian-config:/config
       - vault:/vaults
@@ -29,7 +33,7 @@ services:
     restart: unless-stopped
     environment:
       - VAULT_PATH=/vault/${VAULT_NAME:-Main}
-      - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN:?MCP_AUTH_TOKEN missing}
+      - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN}
       - READ_ONLY=${READ_ONLY:-false}
     volumes:
       - vault:/vault
