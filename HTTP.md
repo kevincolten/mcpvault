@@ -1,54 +1,46 @@
 # MCPVault over HTTP (Coolify)
 
 This fork adds a Streamable HTTP entrypoint (`http.ts`) next to the stock stdio one, plus a
-Coolify stack that runs Obsidian and MCPVault side by side on one shared vault volume.
+Coolify stack that runs Obsidian and MCPVault on one shared vault volume.
 
-## What runs
+## Stack
 
-| Service    | Image                              | Port | Purpose                                      |
-| ---------- | ---------------------------------- | ---- | -------------------------------------------- |
-| `obsidian` | `lscr.io/linuxserver/obsidian`     | 3000 | Obsidian desktop in the browser, basic auth  |
-| `mcpvault` | built from this repo               | 3333 | MCP endpoint at `/mcp`, health at `/healthz` |
+| Service       | Exposure                                   | Purpose                                     |
+| ------------- | ------------------------------------------ | ------------------------------------------- |
+| `obsidian`    | Tailscale IP, `:3010` http / `:3011` https | Obsidian desktop in the browser, basic auth |
+| `mcpvault`    | internal only, `:3333`                     | MCP at `/mcp`, health at `/healthz`         |
+| `authproxy`   | internal only                              | OAuth in front of mcpvault for Claude       |
+| `cloudflared` | outbound                                   | `obsidian-mcp.kevincolten.com` -> authproxy |
 
-Both mount the `vault` volume. Obsidian sees it at `/vaults`, MCPVault at `/vault`.
-The vault itself is `/vaults/<VAULT_NAME>` (default `Main`).
+Obsidian mounts the vault volume at `/vaults`, MCPVault at `/vault`.
+The vault is `/vaults/<VAULT_NAME>` (default `Main`).
 
-## Deploy
+## Coolify env
 
-1. Coolify: new resource, Docker Compose, point it at this repo, compose file `docker-compose.yml`.
-2. Set domains for `obsidian` and `mcpvault`.
-3. Deploy. Coolify generates `SERVICE_USER_OBSIDIAN`, `SERVICE_PASSWORD_OBSIDIAN`, and
-   `SERVICE_PASSWORD_64_MCP` (the MCP token). Copy them from the stack's env tab.
-4. Open the Obsidian domain, log in, and "Open folder as vault" on `/vaults/Main`.
-   If you use Obsidian Sync, sign in there and point Sync at that vault.
+| Var                 | Required | Notes                                         |
+| ------------------- | -------- | --------------------------------------------- |
+| `OBSIDIAN_PASSWORD` | yes      | Obsidian web UI password (user `kevin`)       |
+| `PROXY_PASSWORD`    | yes      | Password on the authproxy OAuth login screen  |
+| `TUNNEL_TOKEN`      | yes      | Cloudflare tunnel `obsidian-mcp`              |
+| `VAULT_NAME`        | no       | Default `Main`                                |
+| `READ_ONLY`         | no       | `true` hides write tools                      |
+| `TAILSCALE_IP`      | no       | Default `100.83.15.84`                        |
 
-## Connect Claude
+## First run
 
-Add a custom connector with the token in the path:
+1. Open `https://<tailscale-ip>:3011`, log in, "Open folder as vault" on `/vaults/Main`.
+   Sign into Obsidian Sync there if you use it.
+2. Add a Claude custom connector: `https://obsidian-mcp.kevincolten.com/mcp`.
+   Claude opens the authproxy login; use `PROXY_PASSWORD`.
 
-```
-https://<mcpvault-domain>/mcp/<SERVICE_PASSWORD_64_MCP>
-```
+## Running http.ts elsewhere
 
-Clients that can send headers can use `https://<mcpvault-domain>/mcp` with
-`Authorization: Bearer <token>` instead.
-
-## Env
-
-| Var              | Default   | Notes                                                    |
-| ---------------- | --------- | -------------------------------------------------------- |
-| `VAULT_PATH`     | `/vault`  | Vault root inside the container                          |
-| `PORT`           | `3333`    |                                                          |
-| `MCP_AUTH_TOKEN` | none      | Required unless `ALLOW_NO_AUTH=true`                     |
-| `READ_ONLY`      | `false`   | Hide and reject write tools                              |
-| `VAULT_NAME`     | `Main`    | Compose only; folder under the shared volume             |
-| `TZ`             | `America/Los_Angeles` | Compose only; Obsidian container timezone    |
-
-## Local
+Without the proxy, set a token and it guards itself:
 
 ```
 npm install && npm run build
 VAULT_PATH=~/Vault MCP_AUTH_TOKEN=dev node dist/http.js
 ```
 
-Serves both the 2025 stateless protocol (what Claude.ai uses today) and 2026-07-28.
+Send `Authorization: Bearer dev`, or put the token in the path: `/mcp/dev`.
+Serves both the 2025 stateless protocol and 2026-07-28.
