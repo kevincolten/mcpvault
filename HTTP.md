@@ -5,12 +5,11 @@ Coolify stack that runs Obsidian and MCPVault on one shared vault volume.
 
 ## Stack
 
-| Service       | Exposure                                   | Purpose                                     |
-| ------------- | ------------------------------------------ | ------------------------------------------- |
-| `obsidian`    | Tailscale IP, `:3010` http / `:3011` https | Obsidian desktop in the browser, basic auth |
-| `mcpvault`    | internal only, `:3333`                     | MCP at `/mcp`, health at `/healthz`         |
-| `authproxy`   | internal only                              | OAuth in front of mcpvault for Claude       |
-| `cloudflared` | outbound                                   | `obsidian-mcp.kevincolten.com` -> authproxy |
+| Service     | Exposure                                   | Purpose                                     |
+| ----------- | ------------------------------------------ | ------------------------------------------- |
+| `obsidian`  | Tailscale IP, `:3010` http / `:3011` https | Obsidian desktop in the browser, basic auth |
+| `mcpvault`  | internal only, `:3333`                     | MCP at `/mcp`, health at `/healthz`         |
+| `authproxy` | Coolify domain, port 80                    | OAuth in front of mcpvault for Claude       |
 
 Obsidian mounts the vault volume at `/vaults`, MCPVault at `/vault`.
 The vault is `/vaults/<VAULT_NAME>` (default `Main`).
@@ -21,7 +20,7 @@ The vault is `/vaults/<VAULT_NAME>` (default `Main`).
 | ------------------- | -------- | --------------------------------------------- |
 | `OBSIDIAN_PASSWORD` | yes      | Obsidian web UI password (user `kevin`)       |
 | `PROXY_PASSWORD`    | yes      | Password on the authproxy OAuth login screen  |
-| `TUNNEL_TOKEN`      | yes      | Cloudflare tunnel `obsidian-mcp`              |
+| `EXTERNAL_URL`      | yes      | Public URL of authproxy, matches its domain   |
 | `VAULT_NAME`        | no       | Default `Main`                                |
 | `READ_ONLY`         | no       | `true` hides write tools                      |
 | `TAILSCALE_IP`      | no       | Default `100.83.15.84`                        |
@@ -30,8 +29,7 @@ The vault is `/vaults/<VAULT_NAME>` (default `Main`).
 
 1. Open `https://<tailscale-ip>:3011`, log in, "Open folder as vault" on `/vaults/Main`.
    Sign into Obsidian Sync there if you use it.
-2. Add a Claude custom connector: `https://obsidian-mcp.kevincolten.com/mcp`.
-   Claude opens the authproxy login; use `PROXY_PASSWORD`.
+2. Add a Claude custom connector: `<EXTERNAL_URL>/mcp`, log in with `PROXY_PASSWORD`.
 
 ## Running http.ts elsewhere
 

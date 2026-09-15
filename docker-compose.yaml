@@ -1,8 +1,8 @@
 # Coolify stack: Obsidian desktop + MCPVault over HTTP on one shared vault volume,
-# fronted by mcp-auth-proxy (OAuth for Claude) and a Cloudflare Tunnel.
+# with mcp-auth-proxy in front of MCPVault for Claude OAuth.
 #
 # Obsidian UI is bound to the Tailscale IP only. MCPVault publishes no ports;
-# the only public path is cloudflared -> authproxy -> mcpvault.
+# assign a Coolify domain to authproxy (port 80) to reach it.
 services:
   obsidian:
     image: lscr.io/linuxserver/obsidian:latest
@@ -42,7 +42,7 @@ services:
     image: ghcr.io/sigbit/mcp-auth-proxy:v2.10.2
     restart: unless-stopped
     environment:
-      - EXTERNAL_URL=${EXTERNAL_URL:-https://obsidian-mcp.kevincolten.com}
+      - EXTERNAL_URL=${EXTERNAL_URL:?EXTERNAL_URL missing}
       - NO_AUTO_TLS=true
       - PASSWORD=${PROXY_PASSWORD:?PROXY_PASSWORD missing}
     command: http://mcpvault:3333/mcp
@@ -50,15 +50,6 @@ services:
       - authproxy-data:/data
     depends_on:
       - mcpvault
-
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    restart: unless-stopped
-    command: tunnel --no-autoupdate run
-    environment:
-      - TUNNEL_TOKEN=${TUNNEL_TOKEN:?TUNNEL_TOKEN missing}
-    depends_on:
-      - authproxy
 
 volumes:
   obsidian-config:
