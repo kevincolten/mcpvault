@@ -2,19 +2,19 @@
 #
 # Nothing here is public. MCPVault joins the shared `coolify` network as
 # `obsidian-mcpvault` so the austindevs-mcp gateway can reach it at
-# http://obsidian-mcpvault:3333/mcp with a bearer token (MCP_AUTH_TOKEN).
-# The sync sidecar pushes vault changes to Obsidian Sync and pulls edits back.
+# http://obsidian-mcpvault:3333/mcp
 #
-# MCP_AUTH_TOKEN is set as runtime env in Coolify. It is not marked required here
-# because Coolify interpolates the file at build time without runtime values.
-# mcpvault exits on startup if it is empty.
+# No bearer token: the endpoint is not published and only the gateway talks to
+# it. To turn auth back on, drop ALLOW_NO_AUTH and set MCP_AUTH_TOKEN as a
+# runtime env var in Coolify. The auth code in http.ts is still there.
+# The sync sidecar pushes vault changes to Obsidian Sync and pulls edits back.
 services:
   mcpvault:
     build: .
     restart: unless-stopped
     environment:
       - VAULT_PATH=/vault/${VAULT_NAME:-Main}
-      - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN}
+      - ALLOW_NO_AUTH=true
       - READ_ONLY=${READ_ONLY:-false}
     volumes:
       - vault:/vault
@@ -33,9 +33,9 @@ services:
     build:
       context: .
       dockerfile: sync.Dockerfile
-    restart: unless-stopped
     environment:
       - VAULT_PATH=/vault/${VAULT_NAME:-Main}
+    restart: unless-stopped
     volumes:
       - vault:/vault
       - sync-home:/home/node
