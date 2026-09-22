@@ -25,7 +25,7 @@ test("createServer returns a Server instance", () => {
   expect(typeof server.connect).toBe("function");
 });
 
-test("server registers 18 tools", async () => {
+test("server registers 20 tools", async () => {
   const server = createServer(testVaultPath, { version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
@@ -37,7 +37,7 @@ test("server registers 18 tools", async () => {
   ]);
 
   const result = await client.listTools();
-  expect(result.tools).toHaveLength(18);
+  expect(result.tools).toHaveLength(20);
 
   const toolNames = result.tools.map((t) => t.name).sort();
   expect(toolNames).toEqual([
@@ -52,11 +52,13 @@ test("server registers 18 tools", async () => {
     "move_file",
     "move_note",
     "patch_note",
+    "read_file",
     "read_multiple_notes",
     "read_note",
     "read_note_lines",
     "search_notes",
     "update_frontmatter",
+    "upload_file",
     "wiki_link",
     "write_note",
   ]);
@@ -243,8 +245,10 @@ test("read-only mode exposes read tools and rejects every vault mutation", async
   try {
     const listedTools = await client.listTools();
     const toolNames = listedTools.tools.map((tool) => tool.name);
-    expect(toolNames).toHaveLength(11);
+    expect(toolNames).toHaveLength(12);
     expect(toolNames).toContain("read_note");
+    expect(toolNames).toContain("read_file");
+    expect(toolNames).not.toContain("upload_file");
     expect(toolNames).toContain("search_notes");
     expect(toolNames).not.toContain("write_note");
     expect(toolNames).not.toContain("manage_tags");
@@ -256,7 +260,13 @@ test("read-only mode exposes read tools and rejects every vault mutation", async
     expect(readResult.isError).toBeFalsy();
     expect((readResult.content as any)[0].text).toContain("Safe content");
 
+    const binaryRead = await client.callTool({ name: "read_file", arguments: { path: "existing.md" } });
+    expect(binaryRead.isError).toBeFalsy();
+    const binaryResource = (binaryRead.content as any[]).find(block => block.type === "resource").resource;
+    expect(Buffer.from(binaryResource.blob, "base64").toString("utf8")).toBe("# Existing\n\nSafe content");
+
     const mutations = [
+      { name: "upload_file", arguments: { path: "blocked.pdf", contentBase64: "AA==" } },
       { name: "write_note", arguments: { path: "blocked.md", content: "blocked" } },
       { name: "patch_note", arguments: { path: "existing.md", oldString: "Safe", newString: "Changed" } },
       { name: "delete_note", arguments: { path: "existing.md", confirmPath: "existing.md" } },
@@ -278,6 +288,43 @@ test("read-only mode exposes read tools and rejects every vault mutation", async
     expect(await readFile(join(testVaultPath, "existing.md"), "utf8")).toBe(
       "# Existing\n\nSafe content",
     );
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+
+test("original PDF bytes survive an MCP upload/read round trip", async () => {
+  const { server, client } = await connectClient();
+  const bytes = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2d, 0xff, 0x00, 0x80]);
+  try {
+    const uploaded = await client.callTool({
+      name: "upload_file",
+      arguments: { path: " Attachments/Trip & claim/original.pdf ", contentBase64: bytes.toString("base64") },
+    });
+    expect(uploaded.isError).toBeFalsy();
+    const metadata = JSON.parse((uploaded.content as any)[0].text);
+    expect(metadata.size).toBe(bytes.length);
+    expect(metadata.mimeType).toBe("application/pdf");
+    const downloaded = await client.callTool({
+      name: "read_file",
+      arguments: { path: "Attachments/Trip & claim/original.pdf" },
+    });
+    expect(downloaded.isError).toBeFalsy();
+    const blocks = downloaded.content as any[];
+    const resource = blocks.find(block => block.type === "resource").resource;
+    expect(resource.mimeType).toBe("application/pdf");
+    expect(resource.uri).toBe("obsidian-vault:///Attachments/Trip%20%26%20claim/original.pdf");
+    expect(Buffer.from(resource.blob, "base64")).toEqual(bytes);
+    expect(JSON.parse(blocks[0].text).sha256).toBe(metadata.sha256);
+    expect(await readFile(join(testVaultPath, metadata.path))).toEqual(bytes);
+    const collision = await client.callTool({
+      name: "upload_file",
+      arguments: { path: metadata.path, contentBase64: "AA==" },
+    });
+    expect(collision.isError).toBe(true);
+    expect(await readFile(join(testVaultPath, metadata.path))).toEqual(bytes);
   } finally {
     await client.close();
     await server.close();

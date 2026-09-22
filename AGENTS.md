@@ -48,20 +48,22 @@ website-shibumi/       # Bun + Hono + TSX website serving mcpvault.org (separate
 
 ### Core Components
 
-**server.ts** — Entry point. Registers 18 MCP tools, handles CLI args (--help, --version, --read-only, vault path), initializes services, routes tool calls. Read-only mode hides mutating tools and rejects direct mutation calls. Auto-trims whitespace from all path arguments. Exits on stdin EOF / SIGTERM / SIGINT (graceful `server.close()`), otherwise hosts orphan the process (#159).
+**server.ts** — Entry point. Registers 20 MCP tools, handles CLI args (--help, --version, --read-only, vault path), initializes services, routes tool calls. Read-only mode hides mutating tools and rejects direct mutation calls. Auto-trims whitespace from all path arguments. Exits on stdin EOF / SIGTERM / SIGINT (graceful `server.close()`), otherwise hosts orphan the process (#159).
 
 **FileSystemService** (`src/filesystem.ts`) — Orchestrates file ops with security. Path resolution and traversal prevention. Implements: read, write, patch, delete, move, list, batch read, outline and line-range reads, frontmatter update, tag management, vault stats. Uses native `fs/promises`.
 
 **FrontmatterHandler** (`src/frontmatter.ts`) — Parses/stringifies YAML frontmatter via `gray-matter`. Validates structure (blocks functions, symbols, invalid types). Preserves original content.
 
-**PathFilter** (`src/pathfilter.ts`) — Blocks `.obsidian/`, `.git/`, `node_modules/`, system files, dot files. Note tools allow `.md`, `.markdown`, `.txt`; directory listings may include other file types by filename. Checks path components independently.
+**PathFilter** (`src/pathfilter.ts`) — Blocks `.obsidian/`, `.git/`, `node_modules/`, system files, dot files. Note tools allow `.md`, `.markdown`, `.txt`; directory listings and binary transfer tools allow other file types, with the same path exclusions. Checks path components independently.
 
 **SearchService** (`src/search.ts`) — Content and frontmatter search with multi-word matching and BM25 relevance reranking. Returns token-optimized results with minified field names: `{p, t, ex, mc, ln, uri}`. Max 20 results.
 
-### 18 MCP Tools
+### 20 MCP Tools
 
 | Tool | Description |
 |------|-------------|
+| upload_file | Upload original base64 file bytes, maximum 10 MiB; confirmed overwrite only |
+| read_file | Retrieve original file bytes as an embedded MCP resource with checksum |
 | read_note | Read a single note with frontmatter |
 | get_note_outline | Return note headings with levels and line numbers |
 | read_note_lines | Read an inclusive line range from a note |
@@ -90,6 +92,7 @@ website-shibumi/       # Bun + Hono + TSX website serving mcpvault.org (separate
 
 ### Key Implementation Details
 
+- **Binary transfers**: `src/files.ts` defines validation, metadata, and the 10 MiB limit. FileSystemService transfers use `isAllowedForListing`, normalization, and `resolvePath`; reject all symlinks and require explicit confirmation to overwrite. `read_file` returns an embedded resource blob, not a download URL.
 - **Paths**: Always relative to vault root. Leading slashes stripped. Whitespace trimmed automatically.
 - **Frontmatter**: Always use FrontmatterHandler for read/write. `originalContent` field has raw file content. Empty frontmatter = no YAML block.
 - **Write modes**: overwrite (default), append (content to end, merge frontmatter), prepend (content to beginning, merge frontmatter)
