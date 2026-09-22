@@ -1,8 +1,10 @@
 import { join, resolve, relative, dirname } from 'path';
 import { homedir } from 'os';
-import { readdir, stat, readFile, writeFile, unlink, mkdir, access, rename, copyFile } from 'node:fs/promises';
+import { readdir, stat, readFile, writeFile, unlink, mkdir, access, rename, copyFile, lstat, open, link } from 'node:fs/promises';
 import { constants, realpathSync } from 'node:fs';
 import trash from 'trash';
+import { createHash, randomUUID } from 'node:crypto';
+import { MAX_FILE_BYTES, decodeFileBase64, fileMetadata } from './files.js';
 import { FrontmatterHandler } from './frontmatter.js';
 import { PathFilter } from './pathfilter.js';
 import { generateObsidianUri } from './uri.js';
@@ -146,6 +148,132 @@ export class FileSystemService {
             }
         }
         return fullPath;
+    }
+    /**
+     * Binary transfers use the listing filter (all extensions), but reject symlinks
+     * at every component, including existing ancestors of a new destination.
+     */
+    async resolveTransferPath(input, createParents = false) {
+        if (typeof input !== 'string' || !input.trim()) {
+            throw new Error('path is required and must be a non-empty string');
+        }
+        const raw = input.trim().replace(/\\/g, '/');
+        if (raw.startsWith('/') || raw.includes(':') || raw.includes('\0') ||
+            raw.split('/').some(part => part === '..' || part === '.')) {
+            throw new Error('File transfers require a vault-relative path without traversal');
+        }
+        const path = this.normalizePath(raw);
+        if (!path || path.endsWith('/') || !this.pathFilter.isAllowedForListing(path)) {
+            throw new Error('Access denied: restricted file path');
+        }
+        const fullPath = this.resolvePath(path);
+        const parts = path.split('/').filter(Boolean);
+        let current = this.vaultPath;
+        for (let i = 0; i < parts.length; i++) {
+            current = join(current, parts[i]);
+            const isParent = i < parts.length - 1;
+            let info;
+            try {
+                info = await lstat(current);
+            }
+            catch (error) {
+                if (error.code !== 'ENOENT')
+                    throw error;
+                if (!createParents || !isParent)
+                    continue;
+                try {
+                    await mkdir(current);
+                }
+                catch (mkdirError) {
+                    if (mkdirError.code !== 'EEXIST')
+                        throw mkdirError;
+                }
+                info = await lstat(current);
+            }
+            if (info.isSymbolicLink())
+                throw new Error('Symbolic links are not supported for file transfers');
+            if (isParent ? !info.isDirectory() : !info.isFile()) {
+                throw new Error(isParent ? 'Parent path is not a directory' : 'File transfers require a regular file');
+            }
+        }
+        return { path, fullPath };
+    }
+    async uploadFile(params) {
+        const data = decodeFileBase64(params.contentBase64);
+        if (params.overwrite !== undefined && typeof params.overwrite !== 'boolean') {
+            throw new Error('overwrite must be a boolean');
+        }
+        const sha256 = createHash('sha256').update(data).digest('hex');
+        if (params.sha256 !== undefined &&
+            (typeof params.sha256 !== 'string' || !/^[a-fA-F0-9]{64}$/.test(params.sha256) ||
+                params.sha256.toLowerCase() !== sha256)) {
+            throw new Error('SHA-256 checksum does not match uploaded bytes');
+        }
+        const { path, fullPath } = await this.resolveTransferPath(params.path);
+        if (params.overwrite && params.confirmPath?.trim() !== params.path.trim()) {
+            throw new Error('Overwriting requires confirmPath to exactly match path');
+        }
+        await this.resolveTransferPath(params.path, true);
+        const temporary = join(dirname(fullPath), '.mcpvault-upload-' + randomUUID());
+        try {
+            const handle = await open(temporary, 'wx', 0o600);
+            try {
+                await handle.writeFile(data);
+                await handle.sync();
+            }
+            finally {
+                await handle.close();
+            }
+            // Recheck the destination before publishing a complete file.
+            await this.resolveTransferPath(params.path);
+            if (params.overwrite) {
+                await rename(temporary, fullPath);
+            }
+            else {
+                // Atomic no-clobber: another upload cannot replace an existing file.
+                await link(temporary, fullPath);
+            }
+            return { success: true, ...fileMetadata(path, data) };
+        }
+        catch (error) {
+            if (error.code === 'EEXIST') {
+                throw new Error('File already exists; use overwrite=true and matching confirmPath to replace it');
+            }
+            throw classifyWriteError(error, path);
+        }
+        finally {
+            await unlink(temporary).catch(error => {
+                if (error.code !== 'ENOENT')
+                    throw error;
+            });
+        }
+    }
+    async readBinaryFile(input) {
+        const { path, fullPath } = await this.resolveTransferPath(input);
+        const handle = await open(fullPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+        try {
+            const info = await handle.stat();
+            if (!info.isFile())
+                throw new Error('File transfers require a regular file');
+            if (info.size > MAX_FILE_BYTES)
+                throw new Error('File exceeds the 10 MiB transfer limit');
+            // Bound the read even if a local process grows the file after stat().
+            const buffer = Buffer.alloc(MAX_FILE_BYTES + 1);
+            let size = 0;
+            while (size < buffer.length) {
+                const { bytesRead } = await handle.read(buffer, size, buffer.length - size, size);
+                if (!bytesRead)
+                    break;
+                size += bytesRead;
+            }
+            if (size > MAX_FILE_BYTES)
+                throw new Error('File exceeds the 10 MiB transfer limit');
+            const data = buffer.subarray(0, size);
+            return { ...fileMetadata(path, data), contentBase64: data.toString('base64') };
+        }
+        finally {
+            await handle.close();
+        }
     }
     async readNote(path) {
         path = this.normalizePath(path);
