@@ -74,7 +74,13 @@ export class PathFilter {
     return normalizedPath
       .split('/')
       .filter(seg => seg !== '' && seg !== '.')
-      .map(seg => seg.replace(/[. ]+$/, ''))
+      .map(seg => {
+        // Scan once from the end; an unanchored trailing-character regex can
+        // repeatedly rescan long user-supplied runs of dots/spaces.
+        let end = seg.length;
+        while (end > 0 && (seg[end - 1] === '.' || seg[end - 1] === ' ')) end--;
+        return seg.slice(0, end);
+      })
       .join('/');
   }
 

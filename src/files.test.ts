@@ -110,3 +110,9 @@ test('reads empty files and unknown MIME types; rejects missing or oversized fil
   await truncate(join(root, 'large.pdf'), MAX_FILE_BYTES + 1);
   await expect(fs.readBinaryFile('large.pdf')).rejects.toThrow(/limit/);
 });
+
+test('path canonicalization handles long dot/space runs and preserves exclusions', () => {
+  const filter = new PathFilter();
+  expect(filter.isAllowedForListing('Attachments/a' + ' .'.repeat(10000) + 'z.pdf')).toBe(true);
+  expect(filter.isAllowedForListing('nested/.git' + ' .'.repeat(10000) + '/config')).toBe(false);
+});
