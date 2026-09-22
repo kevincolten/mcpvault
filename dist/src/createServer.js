@@ -27,6 +27,18 @@ export function createServer(vaultPath, options = {}) {
     server.setRequestHandler("tools/list", async () => {
         const tools = [
             {
+                name: "read_note",
+                description: "Read a note from the Obsidian vault",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        path: { type: "string", description: "Path to the note relative to vault root" },
+                        prettyPrint: { type: "boolean", description: "Format JSON response with indentation (default: false)", default: false }
+                    },
+                    required: ["path"]
+                }
+            },
+            {
                 name: "upload_file",
                 description: "Upload original file bytes to the vault (PDFs, images, or other files; maximum 10 MiB). Supply canonical base64. Creates parent folders. Existing files require overwrite=true and matching confirmPath. Returns size, MIME type and SHA-256.",
                 annotations: { readOnlyHint: false, destructiveHint: true },
@@ -50,18 +62,6 @@ export function createServer(vaultPath, options = {}) {
                     type: "object",
                     properties: {
                         path: { type: "string", description: "Vault-relative path to a regular file" }
-                    },
-                    required: ["path"]
-                }
-            },
-            {
-                name: "read_note",
-                description: "Read a note from the Obsidian vault",
-                inputSchema: {
-                    type: "object",
-                    properties: {
-                        path: { type: "string", description: "Path to the note relative to vault root" },
-                        prettyPrint: { type: "boolean", description: "Format JSON response with indentation (default: false)", default: false }
                     },
                     required: ["path"]
                 }
