@@ -5,6 +5,7 @@ import { PathFilter } from "./pathfilter.js";
 import { SearchService } from "./search.js";
 import { handleWikiLinkTool } from "./wikilink/index.js";
 import { resolve } from "path";
+import { MAX_FILE_BASE64_LENGTH } from "./files.js";
 
 export interface CreateServerOptions {
   name?: string;
@@ -17,6 +18,7 @@ export interface CreateServerOptions {
 
 const MUTATING_TOOLS = new Set([
   "write_note",
+  "upload_file",
   "patch_note",
   "delete_note",
   "move_note",
@@ -57,6 +59,35 @@ export function createServer(vaultPath: string, options: CreateServerOptions = {
           }
         },
         {
+          name: "upload_file",
+          description: "Upload original file bytes to the vault (PDFs, images, or other files; maximum 10 MiB). Supply canonical base64. Creates parent folders. Existing files require overwrite=true and matching confirmPath. Returns size, MIME type and SHA-256.",
+          annotations: { readOnlyHint: false, destructiveHint: true },
+          inputSchema: {
+            type: "object",
+            properties: {
+              path: { type: "string", description: "Vault-relative destination file path" },
+              contentBase64: { type: "string", maxLength: MAX_FILE_BASE64_LENGTH, description: "Original file bytes encoded as canonical base64, including padding; no data URL prefix" },
+              sha256: { type: "string", description: "Optional expected SHA-256 checksum of the original bytes", pattern: "^[a-fA-F0-9]{64}$" },
+              overwrite: { type: "boolean", default: false },
+              confirmPath: { type: "string", description: "Required when overwrite=true; must exactly match path" }
+            },
+            required: ["path", "contentBase64"]
+          }
+        },
+        {
+          name: "read_file",
+          description: "Retrieve a vault file as an embedded MCP resource containing the original base64 bytes (maximum 10 MiB), plus filename/path, size, MIME type and SHA-256. Use for PDFs/images and other attachments; use read_note for parsed note text.",
+          annotations: { readOnlyHint: true, destructiveHint: false },
+          inputSchema: {
+            type: "object",
+            properties: {
+              path: { type: "string", description: "Vault-relative path to a regular file" }
+            },
+            required: ["path"]
+          }
+        },
+
+        {
           name: "write_note",
           description: "Write a note to the Obsidian vault",
           inputSchema: {
@@ -86,7 +117,7 @@ export function createServer(vaultPath: string, options: CreateServerOptions = {
         },
         {
           name: "list_directory",
-          description: "List files and directories in the vault (includes non-note filenames, while read/write tools remain note-only)",
+          description: "List files and directories in the vault (includes attachments; use read_file/upload_file for original file bytes)",
           inputSchema: {
             type: "object",
             properties: {
@@ -309,6 +340,31 @@ export function createServer(vaultPath: string, options: CreateServerOptions = {
 
     try {
       switch (toolName) {
+        case "upload_file": {
+          const result = await fileSystem.uploadFile({
+            path: trimmedArgs.path,
+            contentBase64: trimmedArgs.contentBase64,
+            sha256: trimmedArgs.sha256,
+            overwrite: trimmedArgs.overwrite,
+            confirmPath: trimmedArgs.confirmPath,
+          });
+          return { content: [{ type: "text", text: JSON.stringify(result) }] };
+        }
+
+        case "read_file": {
+          const { contentBase64, ...metadata } = await fileSystem.readBinaryFile(trimmedArgs.path);
+          return {
+            content: [
+              { type: "text", text: JSON.stringify(metadata) },
+              { type: "resource", resource: {
+                uri: metadata.uri,
+                mimeType: metadata.mimeType,
+                blob: contentBase64,
+              } },
+            ],
+          };
+        }
+
         case "read_note": {
           const note = await fileSystem.readNote(trimmedArgs.path);
           const indent = trimmedArgs.prettyPrint ? 2 : undefined;

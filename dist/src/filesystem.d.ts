@@ -1,3 +1,4 @@
+import { type UploadFileParams } from './files.js';
 import { FrontmatterHandler } from './frontmatter.js';
 import { PathFilter } from './pathfilter.js';
 import type { ParsedNote, DirectoryListing, NoteWriteParams, DeleteNoteParams, DeleteResult, MoveNoteParams, MoveFileParams, MoveResult, BatchReadParams, BatchReadResult, UpdateFrontmatterParams, NoteInfo, TagManagementParams, TagManagementResult, PatchNoteParams, PatchNoteResult, VaultStats, NoteHeading, ReadNoteLinesParams } from './types.js';
@@ -23,6 +24,27 @@ export declare class FileSystemService {
      */
     private normalizePath;
     private resolvePath;
+    /**
+     * Binary transfers use the listing filter (all extensions), but reject symlinks
+     * at every component, including existing ancestors of a new destination.
+     */
+    private resolveTransferPath;
+    uploadFile(params: UploadFileParams): Promise<{
+        path: string;
+        size: number;
+        mimeType: string;
+        sha256: string;
+        uri: string;
+        success: boolean;
+    }>;
+    readBinaryFile(input: string): Promise<{
+        path: string;
+        size: number;
+        mimeType: string;
+        sha256: string;
+        uri: string;
+        contentBase64: string;
+    }>;
     readNote(path: string): Promise<ParsedNote>;
     writeNote(params: NoteWriteParams): Promise<void>;
     patchNote(params: PatchNoteParams): Promise<PatchNoteResult>;

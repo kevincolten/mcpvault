@@ -109,8 +109,8 @@ An MCP client starts MCPVault as a local stdio process and passes the vault path
 
 - AST-aware frontmatter updates preserve formatting for unchanged YAML fields.
 - Path checks block traversal, symlink escapes, dotfiles, `.obsidian`, `.git`, and `node_modules`.
-- Eighteen MCP tools cover note and file operations:
-  - File operations: `read_note`, `write_note`, `patch_note`, `delete_note`, `move_note`, `move_file`
+- Twenty MCP tools cover note and file operations:
+  - File operations: `read_note`, `write_note`, `patch_note`, `delete_note`, `move_note`, `move_file`, `upload_file`, `read_file`
   - Partial reads: `get_note_outline`, `read_note_lines`
   - Directory and batch reads: `list_directory`, `read_multiple_notes`
   - Search: `search_notes` with multi-word matching and BM25 reranking
@@ -781,6 +781,36 @@ Move or rename a note in the vault (`.md`, `.markdown`, `.txt`, `.base`, `.canva
 }
 ```
 
+### Binary attachments: `upload_file` and `read_file`
+
+Upload original PDFs, images, email attachments, or other files without converting their contents:
+
+```json
+{
+  "name": "upload_file",
+  "arguments": {
+    "path": "Attachments/receipt.pdf",
+    "contentBase64": "<original file bytes encoded as standard padded base64>",
+    "sha256": "<optional SHA-256 hex digest>"
+  }
+}
+```
+
+The response reports `success`, `path`, `size` (bytes), `mimeType`, `sha256`, and `uri`. Parent folders are created as needed. Existing files are preserved unless `overwrite: true` and `confirmPath` matching `path` are supplied. Writes publish a complete file atomically; concurrent uploads without overwrite cannot clobber each other.
+
+Retrieve the original bytes:
+
+```json
+{
+  "name": "read_file",
+  "arguments": { "path": "Attachments/receipt.pdf" }
+}
+```
+
+The response contains metadata as JSON text and an embedded MCP resource with `uri`, `mimeType`, and base64 `blob`. The `obsidian-vault:///` URI identifies the returned resource; it is not a public download URL. Decode the blob to recover the original file. MIME types are inferred from the filename; unknown extensions use `application/octet-stream`.
+
+Both operations accept files up to **10 MiB** (decoded), require vault-relative paths, and reject traversal, hidden/system paths, ignored paths, directories, and symbolic links (including parent links). Base64 must be canonical, without whitespace or a data URL prefix. Read-only mode allows `read_file` and hides/rejects `upload_file`. Note tools retain their existing extension restrictions and frontmatter behavior. HTTP clients and gateways must also permit the encoded request size (approximately 13.4 MiB for a 10 MiB file).
+
 ### `move_file`
 
 Move or rename any file in the vault with binary-safe file operations (file-only; not recursive directory moves). For safety, this tool requires confirmation of both source and destination paths.
@@ -954,7 +984,7 @@ MCPVault applies these checks before file operations:
 ### File Filtering
 
 - **Automatic Exclusions:** `.obsidian`, `.git`, `node_modules`, and system files are filtered
-- **Extension Whitelist:** Only `.md`, `.markdown`, `.txt`, `.base`, and `.canvas` files are accessible by default
+- **Note Extension Whitelist:** Note tools allow `.md`, `.markdown`, `.txt`, `.base`, and `.canvas`; `upload_file`, `read_file`, and `move_file` support attachments of any extension while enforcing path exclusions
 - **Hidden File Protection:** Dot files and system directories are automatically excluded
 
 ### Content Validation
