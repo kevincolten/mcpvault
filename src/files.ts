@@ -25,6 +25,29 @@ export function decodeFileBase64(value: string): Buffer {
   return data;
 }
 
+/**
+ * Tolerant front door for base64 coming from a model or a human: accepts a
+ * data URL prefix, line breaks and other whitespace, URL-safe -/_ characters,
+ * and missing padding, then hands the cleaned string to the strict decoder.
+ * decodeFileBase64 itself stays strict.
+ */
+export function normalizeBase64(value: string): string {
+  if (typeof value !== 'string') throw new Error('contentBase64 must be a base64 string');
+  if (value.length > MAX_FILE_BASE64_LENGTH * 2) throw new Error('File exceeds the 10 MiB transfer limit');
+  let v = value.trim();
+  const prefix = v.match(/^data:[^,]*;base64,/i);
+  if (prefix) v = v.slice(prefix[0].length);
+  v = v.replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');
+  const remainder = v.length % 4;
+  if (remainder === 1) throw new Error('contentBase64 has an impossible length; some characters were lost');
+  if (remainder) v += '='.repeat(4 - remainder);
+  return v;
+}
+
+export function decodeFileBase64Lenient(value: string): Buffer {
+  return decodeFileBase64(normalizeBase64(value));
+}
+
 const MIME_TYPES: Record<string, string> = {
   '.pdf': 'application/pdf',
   '.png': 'image/png',
