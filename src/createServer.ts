@@ -5,7 +5,10 @@ import { PathFilter } from "./pathfilter.js";
 import { SearchService } from "./search.js";
 import { handleWikiLinkTool } from "./wikilink/index.js";
 import { resolve } from "path";
-import { MAX_FILE_BASE64_LENGTH } from "./files.js";
+import { MAX_FILE_BASE64_LENGTH, MAX_FILE_BYTES, normalizeBase64 } from "./files.js";
+import { uploadBytes, validateUploadPath } from "./uploadhelpers.js";
+import { fetchSourceUrl } from "./sourceurl.js";
+import type { UploadTokenStore } from "./uploads.js";
 
 export interface CreateServerOptions {
   name?: string;
@@ -14,11 +17,18 @@ export interface CreateServerOptions {
   frontmatterHandler?: FrontmatterHandler;
   /** Expose read tools only and reject direct calls to mutating tools. */
   readOnly?: boolean;
+  /** When set, the request_upload_url tool is offered. HTTP deployments only. */
+  uploadTokens?: UploadTokenStore;
+  /** Public base the upload token is appended to, e.g. https://host/obsidian-upload */
+  uploadBaseUrl?: string;
+  /** Let sourceUrl fetch private addresses. Off by default (SSRF guard). */
+  allowPrivateSourceUrls?: boolean;
 }
 
 const MUTATING_TOOLS = new Set([
   "write_note",
   "upload_file",
+  "request_upload_url",
   "patch_note",
   "delete_note",
   "move_note",
@@ -34,6 +44,9 @@ export function createServer(vaultPath: string, options: CreateServerOptions = {
     pathFilter = new PathFilter(),
     frontmatterHandler = new FrontmatterHandler(),
     readOnly = false,
+    uploadTokens,
+    uploadBaseUrl,
+    allowPrivateSourceUrls = false,
   } = options;
 
   const resolvedVaultPath = resolve(vaultPath);
@@ -60,18 +73,19 @@ export function createServer(vaultPath: string, options: CreateServerOptions = {
         },
         {
           name: "upload_file",
-          description: "Upload original file bytes to the vault (PDFs, images, or other files; maximum 10 MiB). Supply canonical base64. Creates parent folders. Existing files require overwrite=true and matching confirmPath. Returns size, MIME type and SHA-256.",
+          description: "Upload original file bytes to the vault (PDFs, images, or other files; maximum 10 MiB). Give the bytes one of two ways: sourceUrl (the server downloads a public http/https URL itself, best for anything already hosted) or contentBase64 (tolerates data URLs, whitespace, URL-safe characters and missing padding). For a file that only exists on the caller's machine, prefer request_upload_url. Creates parent folders. Existing files require overwrite=true and matching confirmPath. Returns size, MIME type and SHA-256.",
           annotations: { readOnlyHint: false, destructiveHint: true },
           inputSchema: {
             type: "object",
             properties: {
               path: { type: "string", description: "Vault-relative destination file path" },
-              contentBase64: { type: "string", maxLength: MAX_FILE_BASE64_LENGTH, description: "Original file bytes encoded as canonical base64, including padding; no data URL prefix" },
+              sourceUrl: { type: "string", description: "Public http or https URL to download the file from. Private and internal addresses are refused. Use instead of contentBase64." },
+              contentBase64: { type: "string", maxLength: MAX_FILE_BASE64_LENGTH * 2, description: "File bytes as base64. A data URL prefix, whitespace, URL-safe characters and missing padding are accepted. Use instead of sourceUrl." },
               sha256: { type: "string", description: "Optional expected SHA-256 checksum of the original bytes", pattern: "^[a-fA-F0-9]{64}$" },
               overwrite: { type: "boolean", default: false },
               confirmPath: { type: "string", description: "Required when overwrite=true; must exactly match path" }
             },
-            required: ["path", "contentBase64"]
+            required: ["path"]
           }
         },
         {
@@ -317,6 +331,23 @@ export function createServer(vaultPath: string, options: CreateServerOptions = {
         }
       ];
 
+    if (uploadTokens) {
+      tools.splice(1, 0, {
+        name: "request_upload_url",
+        description: "Get a one-time, short-lived upload link for a file that is not hosted anywhere (for example a file in the caller's sandbox). The caller then sends the raw file bytes straight to that link, for example: curl -sS -X PUT --data-binary @file.jpg '<uploadUrl>'. No base64 and nothing to retype. The link works once, expires in minutes, and writes to exactly the path given here. Maximum 10 MiB. Existing files require overwrite=true and matching confirmPath.",
+        annotations: { readOnlyHint: false, destructiveHint: false },
+        inputSchema: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: "Vault-relative destination file path, including the filename and extension" },
+            overwrite: { type: "boolean", default: false },
+            confirmPath: { type: "string", description: "Required when overwrite=true; must exactly match path" }
+          },
+          required: ["path"]
+        }
+      });
+    }
+
     return {
       tools: readOnly
         ? tools.filter((tool) => !MUTATING_TOOLS.has(tool.name))
@@ -341,14 +372,55 @@ export function createServer(vaultPath: string, options: CreateServerOptions = {
     try {
       switch (toolName) {
         case "upload_file": {
+          const hasUrl = trimmedArgs.sourceUrl !== undefined && trimmedArgs.sourceUrl !== "";
+          const hasBase64 = trimmedArgs.contentBase64 !== undefined;
+          if (hasUrl === hasBase64) {
+            throw new Error("Provide exactly one of sourceUrl or contentBase64");
+          }
+          if (hasUrl) {
+            if (typeof trimmedArgs.sourceUrl !== "string") throw new Error("sourceUrl must be a string");
+            validateUploadPath(trimmedArgs.path, trimmedArgs.overwrite, trimmedArgs.confirmPath, pathFilter);
+            const { data } = await fetchSourceUrl(trimmedArgs.sourceUrl.trim(), { allowPrivate: allowPrivateSourceUrls });
+            const result = await uploadBytes(fileSystem, {
+              path: trimmedArgs.path,
+              data,
+              sha256: trimmedArgs.sha256,
+              overwrite: trimmedArgs.overwrite,
+              confirmPath: trimmedArgs.confirmPath,
+            });
+            return { content: [{ type: "text", text: JSON.stringify(result) }] };
+          }
           const result = await fileSystem.uploadFile({
             path: trimmedArgs.path,
-            contentBase64: trimmedArgs.contentBase64,
+            contentBase64: normalizeBase64(trimmedArgs.contentBase64),
             sha256: trimmedArgs.sha256,
             overwrite: trimmedArgs.overwrite,
             confirmPath: trimmedArgs.confirmPath,
           });
           return { content: [{ type: "text", text: JSON.stringify(result) }] };
+        }
+
+        case "request_upload_url": {
+          if (!uploadTokens) throw new Error("Unknown tool: request_upload_url");
+          const path = validateUploadPath(trimmedArgs.path, trimmedArgs.overwrite, trimmedArgs.confirmPath, pathFilter);
+          const { token } = uploadTokens.create(path, trimmedArgs.overwrite === true);
+          const base = (uploadBaseUrl || "").replace(/\/+$/, "");
+          const uploadUrl = base ? `${base}/${token}` : `/upload/${token}`;
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                uploadUrl,
+                method: "PUT",
+                path,
+                maxBytes: MAX_FILE_BYTES,
+                expiresInSeconds: uploadTokens.ttlSeconds,
+                singleUse: true,
+                example: `curl -sS -X PUT --data-binary @FILE '${uploadUrl}'`,
+                ...(base ? {} : { note: "UPLOAD_PUBLIC_BASE_URL is not configured; this is a path on the mcpvault server, not a public URL" }),
+              }),
+            }],
+          };
         }
 
         case "read_file": {
