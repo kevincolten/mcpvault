@@ -16,6 +16,9 @@ services:
       - VAULT_PATH=/vault/${VAULT_NAME:-Main}
       - ALLOW_NO_AUTH=true
       - READ_ONLY=${READ_ONLY:-false}
+      # Base the one-time upload token is appended to. The austindevs-mcp gateway
+      # serves PUT <base>/<token> and forwards it to http://obsidian-mcpvault:3333/upload/<token>.
+      - UPLOAD_PUBLIC_BASE_URL=${UPLOAD_PUBLIC_BASE_URL:-https://mcp.austindevs.com/obsidian-upload}
     volumes:
       - vault:/vault
     networks:
